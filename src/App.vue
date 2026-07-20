@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, ref, onBeforeUnmount } from 'vue';
 import { useAppStore } from './stores/app';
 import { useRouter, useRoute } from 'vue-router';
 import { computed } from 'vue';
@@ -8,8 +8,56 @@ const store = useAppStore();
 const router = useRouter();
 const route = useRoute();
 
+let deferredPrompt: BeforeInstallPromptEvent | null = null;
+const showInstall = ref(false);
+const isIOS = ref(false);
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+const handleBeforeInstallPrompt = (e: Event) => {
+  e.preventDefault();
+  deferredPrompt = e as BeforeInstallPromptEvent;
+  showInstall.value = true;
+};
+
+const handleAppInstalled = () => {
+  showInstall.value = false;
+  deferredPrompt = null;
+};
+
+const installApp = async () => {
+  if (!deferredPrompt) return;
+  await deferredPrompt.prompt();
+  const choice = await deferredPrompt.userChoice;
+  if (choice.outcome === 'accepted') {
+    showInstall.value = false;
+  }
+  deferredPrompt = null;
+};
+
+const dismissInstall = () => {
+  showInstall.value = false;
+};
+
 onMounted(async () => {
   await store.initialize();
+
+  window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  window.addEventListener('appinstalled', handleAppInstalled);
+
+  const ua = window.navigator.userAgent;
+  isIOS.value = /iP(hone|ad|od)/.test(ua) && !('MSStream' in window);
+  if (isIOS.value && !window.matchMedia('(display-mode: standalone)').matches) {
+    showInstall.value = true;
+  }
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  window.removeEventListener('appinstalled', handleAppInstalled);
 });
 
 const navItems = [
@@ -41,6 +89,19 @@ const navigateTo = (path: string) => {
     </div>
 
     <template v-else>
+      <transition name="slide-up">
+        <div v-if="showInstall" class="install-banner">
+          <span class="install-icon">📲</span>
+          <div class="install-text">
+            <strong>Instalar TEA Kids</strong>
+            <small v-if="!isIOS">Adicione à tela inicial para usar como app.</small>
+            <small v-else>No iOS, toque em "Compartilhar" e "Adicionar à Tela de Início".</small>
+          </div>
+          <button v-if="!isIOS" class="install-btn" @click="installApp">Instalar</button>
+          <button class="install-close" @click="dismissInstall" aria-label="Fechar">✕</button>
+        </div>
+      </transition>
+
       <div class="main-content">
         <router-view v-slot="{ Component }">
           <transition name="slide-up" mode="out-in">
@@ -185,5 +246,60 @@ const navigateTo = (path: string) => {
 .slide-up-leave-to {
   opacity: 0;
   transform: translateY(-10px);
+}
+
+.install-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #1E2235;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  border-bottom: 1px solid rgba(77, 148, 255, 0.3);
+}
+
+.install-icon {
+  font-size: 28px;
+}
+
+.install-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  color: #fff;
+}
+
+.install-text strong {
+  font-size: 15px;
+}
+
+.install-text small {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.install-btn {
+  background: #4D94FF;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.install-close {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
 }
 </style>
